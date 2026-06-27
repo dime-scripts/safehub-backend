@@ -239,6 +239,43 @@ app.post('/api/addkey', (req, res) => {
     }
 });
 
+app.post('/api/revokekey', (req, res) => {
+    try {
+        const { key } = req.body;
+        const keys = loadKeys();
+        
+        if (!keys[key]) {
+            return res.json({ success: false, reason: 'Key not found' });
+        }
+        
+        keys[key].active = false;
+        saveKeys(keys);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/revokeuserkeys', (req, res) => {
+    try {
+        const { userId } = req.body;
+        const keys = loadKeys();
+        let revoked = 0;
+        
+        for (const key in keys) {
+            if (keys[key].user_id === userId && keys[key].active) {
+                keys[key].active = false;
+                revoked++;
+            }
+        }
+        
+        saveKeys(keys);
+        res.json({ success: true, revoked: revoked });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.get('/test', (req, res) => {
     const keys = loadKeys();
     res.json({
