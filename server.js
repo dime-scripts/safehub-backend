@@ -152,18 +152,13 @@ wss.on('connection', (ws) => {
     ws.send(JSON.stringify(serverData));
 });
 
-const PORT = 8080;
-server.listen(PORT, '0.0.0.0', () => {
-    console.log('═══════════════════════════════════════════════════════');
-    console.log('  SAFE HUB - Backend Server');
-    console.log('═══════════════════════════════════════════════════════');
-    console.log(`  Server running on: http://localhost:${PORT}`);
+const PORT = process.env.PORT || 8080;
+
+server.listen(PORT, "0.0.0.0", () => {
+    console.log("═══════════════════════════════════════════════════════");
+    console.log("  SAFE HUB - Backend Server");
+    console.log("═══════════════════════════════════════════════════════");
+    console.log(`  Server running on port ${PORT}`);
     console.log(`  Keys file: ${KEYS_FILE}`);
-    console.log('  Endpoints:');
-    console.log(`    POST /api/validate - Validate a key`);
-    console.log(`    GET  /api/servers  - Get server data`);
-    console.log(`    POST /api/update   - Update server data`);
-    console.log(`    GET  /api/keys     - List all keys`);
-    console.log(`    GET  /test         - Test endpoint`);
-    console.log('═══════════════════════════════════════════════════════');
+    console.log("═══════════════════════════════════════════════════════");
 });
