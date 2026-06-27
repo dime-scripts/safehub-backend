@@ -15,56 +15,77 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('.'));
 
-// Try multiple locations for keys.json
+// Use /tmp directory on Railway for writable storage
 let KEYS_FILE;
-const possiblePaths = [
-    path.join(__dirname, 'keys.json'),           // Project root
-    '/tmp/keys.json',                             // Railway temp
-    path.join(__dirname, 'safehub.ss', 'keys.json') // Your subfolder
-];
-
-for (const testPath of possiblePaths) {
-    try {
-        if (fs.existsSync(testPath)) {
-            KEYS_FILE = testPath;
-            console.log('[Safe Hub] Found keys file at:', KEYS_FILE);
-            break;
-        }
-    } catch (e) {}
-}
-
-if (!KEYS_FILE) {
-    // Default to project root
+if (process.env.RAILWAY_ENVIRONMENT || process.env.RENDER) {
+    KEYS_FILE = '/tmp/keys.json';
+} else {
     KEYS_FILE = path.join(__dirname, 'keys.json');
-    console.log('[Safe Hub] No keys file found, will create at:', KEYS_FILE);
 }
+
+console.log('[Safe Hub] Keys file path:', KEYS_FILE);
 
 function loadKeys() {
     try {
+        // Check if file exists
         if (!fs.existsSync(KEYS_FILE)) {
-            // Create default keys file with a test key
-            const defaultKeys = {
-                "TESTKEY123": {
-                    "created_by": "admin",
-                    "user_id": "123456789",
-                    "created_at": new Date().toISOString(),
-                    "expires_at": new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-                    "max_uses": 10,
-                    "uses": 0,
-                    "active": true,
-                    "duration_days": 365
-                }
-            };
+            console.log('[Safe Hub] keys.json does not exist, creating default');
+            const defaultKeys = createDefaultKeys();
             fs.writeFileSync(KEYS_FILE, JSON.stringify(defaultKeys, null, 4));
-            console.log('[Safe Hub] Created default keys.json with test key');
             return defaultKeys;
         }
+        
+        // Read the file
         const data = fs.readFileSync(KEYS_FILE, 'utf8');
-        return JSON.parse(data);
+        
+        // Check if file is empty or only whitespace
+        if (!data || data.trim() === '') {
+            console.log('[Safe Hub] keys.json is empty, creating default');
+            const defaultKeys = createDefaultKeys();
+            fs.writeFileSync(KEYS_FILE, JSON.stringify(defaultKeys, null, 4));
+            return defaultKeys;
+        }
+        
+        // Try to parse JSON
+        try {
+            const parsed = JSON.parse(data);
+            console.log('[Safe Hub] Successfully loaded keys.json');
+            return parsed;
+        } catch (parseError) {
+            console.log('[Safe Hub] Invalid JSON in keys.json, recreating file');
+            const defaultKeys = createDefaultKeys();
+            fs.writeFileSync(KEYS_FILE, JSON.stringify(defaultKeys, null, 4));
+            return defaultKeys;
+        }
     } catch (error) {
-        console.error('[Safe Hub] Error loading keys:', error);
-        return {};
+        console.error('[Safe Hub] Error loading keys:', error.message);
+        const defaultKeys = createDefaultKeys();
+        try {
+            fs.writeFileSync(KEYS_FILE, JSON.stringify(defaultKeys, null, 4));
+            console.log('[Safe Hub] Recreated keys.json with default keys');
+        } catch (e) {
+            console.error('[Safe Hub] Failed to recreate keys.json:', e);
+        }
+        return defaultKeys;
     }
+}
+
+function createDefaultKeys() {
+    // Generate a default test key
+    const testKey = 'TEST' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    const defaultKeys = {};
+    defaultKeys[testKey] = {
+        "created_by": "system",
+        "user_id": "system",
+        "created_at": new Date().toISOString(),
+        "expires_at": new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        "max_uses": 999,
+        "uses": 0,
+        "active": true,
+        "duration_days": 365
+    };
+    console.log('[Safe Hub] Created default test key:', testKey);
+    return defaultKeys;
 }
 
 function saveKeys(keys) {
@@ -188,6 +209,36 @@ app.get('/api/keys', (req, res) => {
     }
 });
 
+app.post('/api/addkey', (req, res) => {
+    try {
+        const { key, userId, maxUses } = req.body;
+        const keys = loadKeys();
+        
+        if (keys[key]) {
+            return res.json({ success: false, reason: 'Key already exists' });
+        }
+        
+        const expiry = new Date();
+        expiry.setDate(expiry.getDate() + 30);
+        
+        keys[key] = {
+            'created_by': 'api',
+            'user_id': userId || 'unknown',
+            'created_at': new Date().toISOString(),
+            'expires_at': expiry.toISOString(),
+            'max_uses': maxUses || 1,
+            'uses': 0,
+            'active': true,
+            'duration_days': 30
+        };
+        
+        saveKeys(keys);
+        res.json({ success: true, key: key });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.get('/test', (req, res) => {
     const keys = loadKeys();
     res.json({
@@ -195,7 +246,8 @@ app.get('/test', (req, res) => {
         port: PORT,
         keysFile: KEYS_FILE,
         environment: process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local',
-        keyCount: Object.keys(keys).length
+        keyCount: Object.keys(keys).length,
+        keys: Object.keys(keys)
     });
 });
 
@@ -224,11 +276,15 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`  Environment: ${process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'}`);
     const keys = loadKeys();
     console.log(`  Total keys: ${Object.keys(keys).length}`);
+    if (Object.keys(keys).length > 0) {
+        console.log(`  Default test key: ${Object.keys(keys)[0]}`);
+    }
     console.log('  Endpoints:');
     console.log(`    POST /api/validate - Validate a key`);
     console.log(`    GET  /api/servers  - Get server data`);
     console.log(`    POST /api/update   - Update server data`);
     console.log(`    GET  /api/keys     - List all keys`);
+    console.log(`    POST /api/addkey   - Add a key manually`);
     console.log(`    GET  /test         - Test endpoint`);
     console.log('═══════════════════════════════════════════════════════');
 });
