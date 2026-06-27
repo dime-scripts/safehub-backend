@@ -15,22 +15,49 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('.'));
 
-// Use /tmp directory on Railway for writable storage
+// Try multiple locations for keys.json
 let KEYS_FILE;
-if (process.env.RAILWAY_ENVIRONMENT || process.env.RENDER) {
-    KEYS_FILE = '/tmp/keys.json';
-} else {
-    KEYS_FILE = path.join(__dirname, 'keys.json');
+const possiblePaths = [
+    path.join(__dirname, 'keys.json'),           // Project root
+    '/tmp/keys.json',                             // Railway temp
+    path.join(__dirname, 'safehub.ss', 'keys.json') // Your subfolder
+];
+
+for (const testPath of possiblePaths) {
+    try {
+        if (fs.existsSync(testPath)) {
+            KEYS_FILE = testPath;
+            console.log('[Safe Hub] Found keys file at:', KEYS_FILE);
+            break;
+        }
+    } catch (e) {}
 }
 
-console.log('[Safe Hub] Keys file path:', KEYS_FILE);
+if (!KEYS_FILE) {
+    // Default to project root
+    KEYS_FILE = path.join(__dirname, 'keys.json');
+    console.log('[Safe Hub] No keys file found, will create at:', KEYS_FILE);
+}
 
 function loadKeys() {
     try {
         if (!fs.existsSync(KEYS_FILE)) {
-            fs.writeFileSync(KEYS_FILE, JSON.stringify({}));
-            console.log('[Safe Hub] Created new keys.json file');
-            return {};
+            // Create default keys file with a test key
+            const defaultKeys = {
+                "TESTKEY123": {
+                    "created_by": "admin",
+                    "user_id": "123456789",
+                    "created_at": new Date().toISOString(),
+                    "expires_at": new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+                    "max_uses": 10,
+                    "uses": 0,
+                    "active": true,
+                    "duration_days": 365
+                }
+            };
+            fs.writeFileSync(KEYS_FILE, JSON.stringify(defaultKeys, null, 4));
+            console.log('[Safe Hub] Created default keys.json with test key');
+            return defaultKeys;
         }
         const data = fs.readFileSync(KEYS_FILE, 'utf8');
         return JSON.parse(data);
@@ -43,6 +70,7 @@ function loadKeys() {
 function saveKeys(keys) {
     try {
         fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 4));
+        console.log('[Safe Hub] Keys saved to:', KEYS_FILE);
     } catch (error) {
         console.error('[Safe Hub] Error saving keys:', error);
     }
@@ -50,6 +78,9 @@ function saveKeys(keys) {
 
 function validateKey(key) {
     const keys = loadKeys();
+    
+    console.log('[Safe Hub] Validating key:', key);
+    console.log('[Safe Hub] Available keys:', Object.keys(keys));
     
     if (!keys[key]) {
         return { valid: false, reason: 'Invalid key' };
@@ -158,11 +189,13 @@ app.get('/api/keys', (req, res) => {
 });
 
 app.get('/test', (req, res) => {
+    const keys = loadKeys();
     res.json({
         status: 'Server is running',
         port: PORT,
         keysFile: KEYS_FILE,
-        environment: process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'
+        environment: process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local',
+        keyCount: Object.keys(keys).length
     });
 });
 
@@ -189,6 +222,8 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`  Server listening on port ${PORT}`);
     console.log(`  Keys file: ${KEYS_FILE}`);
     console.log(`  Environment: ${process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'}`);
+    const keys = loadKeys();
+    console.log(`  Total keys: ${Object.keys(keys).length}`);
     console.log('  Endpoints:');
     console.log(`    POST /api/validate - Validate a key`);
     console.log(`    GET  /api/servers  - Get server data`);
