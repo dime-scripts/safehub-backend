@@ -31,37 +31,37 @@ function saveKeys(keys) {
 
 function validateKey(key) {
     const keys = loadKeys();
-    
+
     if (!keys[key]) {
         return { valid: false, reason: 'Invalid key' };
     }
-    
+
     const data = keys[key];
     const expiry = new Date(data.expires_at);
     const now = new Date();
-    
+
     if (!data.active) {
         return { valid: false, reason: 'Key has been revoked' };
     }
-    
+
     if (expiry < now) {
         return { valid: false, reason: 'Key has expired' };
     }
-    
+
     if (data.uses >= data.max_uses) {
         return { valid: false, reason: 'Key has reached maximum uses' };
     }
-    
+
     return { valid: true, data: data };
 }
 
 function useKey(key) {
     const keys = loadKeys();
-    
+
     if (!keys[key]) {
         return false;
     }
-    
+
     keys[key].uses += 1;
     saveKeys(keys);
     return true;
@@ -73,41 +73,57 @@ let serverData = {
 
 app.post('/api/validate', (req, res) => {
     const { key } = req.body;
-    
+
     console.log('[Safe Hub] Key validation attempt:', key);
-    
+
     if (!key) {
         return res.json({ valid: false, reason: 'No key provided' });
     }
-    
+
     const validation = validateKey(key);
-    
+
     if (validation.valid) {
         useKey(key);
         console.log('[Safe Hub] Key validated successfully:', key);
-        res.json({ valid: true, message: 'Key validated successfully' });
-    } else {
-        console.log('[Safe Hub] Key validation failed:', key, validation.reason);
-        res.json({ valid: false, reason: validation.reason });
+        return res.json({
+            valid: true,
+            message: 'Key validated successfully'
+        });
     }
+
+    console.log('[Safe Hub] Key validation failed:', key, validation.reason);
+
+    res.json({
+        valid: false,
+        reason: validation.reason
+    });
 });
 
 app.get('/api/validate', (req, res) => {
-    res.json({ valid: false, reason: 'Use POST method to validate keys' });
+    res.json({
+        valid: false,
+        reason: 'Use POST method to validate keys'
+    });
 });
 
 app.post('/api/update', (req, res) => {
     const data = req.body;
-    const existingIndex = serverData.servers.findIndex(s => s.serverId === data.serverId);
-    
+
+    const existingIndex = serverData.servers.findIndex(
+        s => s.serverId === data.serverId
+    );
+
     if (existingIndex !== -1) {
         serverData.servers[existingIndex] = data;
     } else {
         serverData.servers.push(data);
     }
-    
+
     broadcastData();
-    res.json({ status: 'ok' });
+
+    res.json({
+        status: 'ok'
+    });
 });
 
 app.get('/api/servers', (req, res) => {
@@ -115,31 +131,46 @@ app.get('/api/servers', (req, res) => {
 });
 
 app.get('/api/command', (req, res) => {
-    const serverId = req.query.serverId;
     const commands = [];
-    
-    res.json({ commands: commands });
+
+    res.json({
+        commands
+    });
 });
 
 app.post('/api/command/result', (req, res) => {
-    res.json({ status: 'ok' });
+    res.json({
+        status: 'ok'
+    });
 });
 
 app.get('/api/keys', (req, res) => {
     const keys = loadKeys();
+
     const keyList = Object.keys(keys).map(key => ({
-        key: key,
+        key,
         ...keys[key]
     }));
-    res.json({ keys: keyList });
+
+    res.json({
+        keys: keyList
+    });
 });
 
 app.get('/test', (req, res) => {
-    res.json({ status: 'Server is running', port: 8080 });
+    res.json({
+        status: 'Server is running',
+        port: PORT
+    });
+});
+
+app.get('/', (req, res) => {
+    res.send('Safe Hub Backend Online');
 });
 
 function broadcastData() {
     const message = JSON.stringify(serverData);
+
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(message);
@@ -147,18 +178,18 @@ function broadcastData() {
     });
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', ws => {
     console.log('[Safe Hub] WebSocket client connected');
     ws.send(JSON.stringify(serverData));
 });
 
 const PORT = process.env.PORT || 8080;
 
-server.listen(PORT, "0.0.0.0", () => {
-    console.log("═══════════════════════════════════════════════════════");
-    console.log("  SAFE HUB - Backend Server");
-    console.log("═══════════════════════════════════════════════════════");
-    console.log(`  Server running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('  SAFE HUB - Backend Server');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log(`  Server listening on port ${PORT}`);
     console.log(`  Keys file: ${KEYS_FILE}`);
-    console.log("═══════════════════════════════════════════════════════");
+    console.log('═══════════════════════════════════════════════════════');
 });
