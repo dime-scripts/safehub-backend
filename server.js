@@ -15,18 +15,37 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('.'));
 
-const KEYS_FILE = path.join(__dirname, 'keys.json');
+// Use /tmp directory on Railway for writable storage
+let KEYS_FILE;
+if (process.env.RAILWAY_ENVIRONMENT || process.env.RENDER) {
+    KEYS_FILE = '/tmp/keys.json';
+} else {
+    KEYS_FILE = path.join(__dirname, 'keys.json');
+}
+
+console.log('[Safe Hub] Keys file path:', KEYS_FILE);
 
 function loadKeys() {
-    if (!fs.existsSync(KEYS_FILE)) {
-        fs.writeFileSync(KEYS_FILE, JSON.stringify({}));
+    try {
+        if (!fs.existsSync(KEYS_FILE)) {
+            fs.writeFileSync(KEYS_FILE, JSON.stringify({}));
+            console.log('[Safe Hub] Created new keys.json file');
+            return {};
+        }
+        const data = fs.readFileSync(KEYS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        console.error('[Safe Hub] Error loading keys:', error);
         return {};
     }
-    return JSON.parse(fs.readFileSync(KEYS_FILE));
 }
 
 function saveKeys(keys) {
-    fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 4));
+    try {
+        fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 4));
+    } catch (error) {
+        console.error('[Safe Hub] Error saving keys:', error);
+    }
 }
 
 function validateKey(key) {
@@ -126,18 +145,24 @@ app.post('/api/command/result', (req, res) => {
 });
 
 app.get('/api/keys', (req, res) => {
-    const keys = loadKeys();
-    const keyList = Object.keys(keys).map(key => ({
-        key: key,
-        ...keys[key]
-    }));
-    res.json({ keys: keyList });
+    try {
+        const keys = loadKeys();
+        const keyList = Object.keys(keys).map(key => ({
+            key: key,
+            ...keys[key]
+        }));
+        res.json({ keys: keyList });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load keys' });
+    }
 });
 
 app.get('/test', (req, res) => {
     res.json({
         status: 'Server is running',
-        port: PORT
+        port: PORT,
+        keysFile: KEYS_FILE,
+        environment: process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'
     });
 });
 
@@ -163,6 +188,7 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('═══════════════════════════════════════════════════════');
     console.log(`  Server listening on port ${PORT}`);
     console.log(`  Keys file: ${KEYS_FILE}`);
+    console.log(`  Environment: ${process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'}`);
     console.log('  Endpoints:');
     console.log(`    POST /api/validate - Validate a key`);
     console.log(`    GET  /api/servers  - Get server data`);
