@@ -121,17 +121,44 @@ def list_keys():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# Add this to your api.py
+
+# Store pending commands for each server
+pending_commands = {}
+
 @app.route('/api/command', methods=['POST'])
 def handle_command():
     try:
         data = request.json
-        print(f'[Safe Hub] Command received: {data}')
-        # Process command here - send to Roblox via HTTP or store for polling
-        return jsonify({'status': 'ok', 'message': 'Command received'})
+        server_id = data.get('serverId')
+        
+        print(f'[Safe Hub] Command received for server {server_id}: {data}')
+        
+        # Store command for the server to pick up
+        if server_id not in pending_commands:
+            pending_commands[server_id] = []
+        pending_commands[server_id].append(data)
+        
+        return jsonify({'status': 'ok', 'message': 'Command stored'})
     except Exception as e:
         print(f'[Safe Hub] Error in command: {e}')
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/api/command/pending', methods=['GET'])
+def get_pending_commands():
+    try:
+        server_id = request.args.get('serverId')
+        
+        if not server_id:
+            return jsonify({'commands': []})
+        
+        # Get and clear pending commands for this server
+        commands = pending_commands.get(server_id, [])
+        pending_commands[server_id] = []  # Clear after sending
+        
+        return jsonify({'commands': commands})
+    except Exception as e:
+        return jsonify({'commands': [], 'error': str(e)}), 500
 @app.route('/api/debug', methods=['GET'])
 def debug():
     server_data = load_servers()
