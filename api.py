@@ -127,6 +127,21 @@ def add_key():
         print(f'[Safe Hub] Error in add_key: {e}')
         return jsonify({'success': False, 'reason': str(e)}), 500
 
+# Add this after the other route definitions
+@app.route('/api/update', methods=['POST'])
+def update_server():
+    try:
+        data = request.json
+        print(f'[Safe Hub] Received update from: {data.get("gameName", "Unknown")}')
+        print(f'[Safe Hub] Players: {data.get("players", 0)} Server: {data.get("serverId", "Unknown")}')
+        
+        # Store server data in a global variable or file
+        # For now, we'll just log it and return success
+        return jsonify({'status': 'ok', 'message': 'Data received'})
+    except Exception as e:
+        print(f'[Safe Hub] Error in update_server: {e}')
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/api/keys', methods=['GET'])
 def list_keys():
     try:
