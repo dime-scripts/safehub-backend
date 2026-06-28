@@ -1,3 +1,9 @@
+console.log('═══════════════════════════════════════════════════════');
+console.log('  SAFE HUB SERVER v2.0.2 - STARTING');
+console.log('  Time: ' + new Date().toISOString());
+console.log('  File: ' + __filename);
+console.log('═══════════════════════════════════════════════════════');
+
 const express = require('express');
 const WebSocket = require('ws');
 const http = require('http');
@@ -15,7 +21,6 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('.'));
 
-// Use /tmp directory on Railway for writable storage
 let KEYS_FILE;
 if (process.env.RAILWAY_ENVIRONMENT || process.env.RENDER) {
     KEYS_FILE = '/tmp/keys.json';
@@ -139,6 +144,8 @@ let serverData = {
 
 // ==================== API ENDPOINTS ====================
 
+console.log('[Safe Hub] Registering routes...');
+
 app.post('/api/validate', (req, res) => {
     const { key } = req.body;
     
@@ -164,8 +171,8 @@ app.get('/api/validate', (req, res) => {
     res.json({ valid: false, reason: 'Use POST method to validate keys' });
 });
 
-// SINGLE update endpoint - fixed
 app.post('/api/update', (req, res) => {
+    console.log('[Safe Hub] /api/update endpoint hit!');
     try {
         const data = req.body;
         console.log('[Safe Hub] Received update from:', data.gameName || 'Unknown Game');
@@ -289,7 +296,8 @@ app.get('/test', (req, res) => {
         keysFile: KEYS_FILE,
         environment: process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local',
         keyCount: Object.keys(keys).length,
-        keys: Object.keys(keys)
+        keys: Object.keys(keys),
+        routes: ['/api/validate', '/api/update', '/api/servers', '/api/keys', '/test']
     });
 });
 
@@ -313,9 +321,17 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 8080;
 
+// Log all registered routes
+console.log('[Safe Hub] Registered routes:');
+app._router.stack.forEach(function(r){
+  if (r.route && r.route.path){
+    console.log('  ' + Object.keys(r.route.methods).join(', ').toUpperCase() + ' ' + r.route.path);
+  }
+});
+
 server.listen(PORT, '0.0.0.0', () => {
     console.log('═══════════════════════════════════════════════════════');
-    console.log('  SAFE HUB - Backend Server');
+    console.log('  SAFE HUB - Backend Server v2.0.2');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`  Server listening on port ${PORT}`);
     console.log(`  Keys file: ${KEYS_FILE}`);
