@@ -1,11 +1,14 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 import json
 import os
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'safehub-secret-key'
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 KEYS_FILE = 'keys.json'
 SERVER_DATA_FILE = 'servers.json'
@@ -59,8 +62,29 @@ def save_servers(data):
         with open(SERVER_DATA_FILE, 'w') as f:
             json.dump(data, f, indent=4)
         print(f'[Safe Hub] Servers saved: {len(data.get("servers", []))} servers')
+        # Broadcast update to all connected clients
+        socketio.emit('server_update', data)
     except Exception as e:
         print(f'Error saving servers: {e}')
+
+@app.route('/')
+def serve_dashboard():
+    return '''
+    <html>
+        <head><title>Safe Hub API</title></head>
+        <body>
+            <h1>Safe Hub API is running</h1>
+            <p>Endpoints:</p>
+            <ul>
+                <li>POST /api/update - Update server data</li>
+                <li>GET /api/servers - Get server data</li>
+                <li>GET /api/keys - List keys</li>
+                <li>POST /api/validate - Validate a key</li>
+            </ul>
+            <p>WebSocket: wss://safehub-backend-production.up.railway.app</p>
+        </body>
+    </html>
+    '''
 
 @app.route('/api/update', methods=['POST'])
 def update_server():
@@ -72,7 +96,7 @@ def update_server():
         server_data = load_servers()
         servers = server_data['servers']
         
-        existing_index = next((i for i, s in enumerate(servers) if s.get('serverId') == data.get('serverId')), -1)
+        existing_index = next((i for i, s in enumerate(servers) if str(s.get('serverId')) == str(data.get('serverId'))), -1)
         
         if existing_index != -1:
             servers[existing_index] = data
@@ -86,17 +110,6 @@ def update_server():
         print(f'[Safe Hub] Error in update_server: {e}')
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-@app.route('/')
-def serve_dashboard():
-    try:
-        with open('index.html', 'r') as f:
-            return f.read()
-    except:
-        return jsonify({
-            'message': 'Safe Hub API is running',
-            'endpoints': ['/api/servers', '/api/update', '/api/keys', '/api/validate']
-        })
-
 @app.route('/api/servers', methods=['GET'])
 def get_servers():
     try:
@@ -104,15 +117,6 @@ def get_servers():
         return jsonify(server_data)
     except Exception as e:
         return jsonify({'servers': [], 'error': str(e)}), 500
-
-@app.route('/api/debug', methods=['GET'])
-def debug():
-    server_data = load_servers()
-    return jsonify({
-        'servers': server_data,
-        'server_count': len(server_data.get('servers', [])),
-        'keys': list(load_keys().keys())
-    })
 
 @app.route('/api/keys', methods=['GET'])
 def list_keys():
@@ -123,6 +127,15 @@ def list_keys():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/debug', methods=['GET'])
+def debug():
+    server_data = load_servers()
+    return jsonify({
+        'servers': server_data,
+        'server_count': len(server_data.get('servers', [])),
+        'keys': list(load_keys().keys())
+    })
+
 @app.route('/test', methods=['GET'])
 def test():
     return jsonify({
@@ -132,5 +145,27 @@ def test():
         'keys': list(load_keys().keys())
     })
 
+@socketio.on('connect')
+def handle_connect():
+    print('[Safe Hub] Client connected via WebSocket')
+    # Send current server data on connection
+    server_data = load_servers()
+    emit('server_update', server_data)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('[Safe Hub] Client disconnected')
+
+@socketio.on('command')
+def handle_command(data):
+    print(f'[Safe Hub] Command received: {data}')
+    # Process command and emit response
+    response = {
+        'status': 'received',
+        'command': data,
+        'timestamp': datetime.now().isoformat()
+    }
+    emit('command_result', response)
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+    socketio.run(app, host='0.0.0.0', port=8080, debug=False)
