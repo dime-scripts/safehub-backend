@@ -86,6 +86,17 @@ def update_server():
         print(f'[Safe Hub] Error in update_server: {e}')
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/')
+def serve_dashboard():
+    try:
+        with open('index.html', 'r') as f:
+            return f.read()
+    except:
+        return jsonify({
+            'message': 'Safe Hub API is running',
+            'endpoints': ['/api/servers', '/api/update', '/api/keys', '/api/validate']
+        })
+
 @app.route('/api/servers', methods=['GET'])
 def get_servers():
     try:
