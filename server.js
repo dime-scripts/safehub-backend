@@ -27,7 +27,6 @@ console.log('[Safe Hub] Keys file path:', KEYS_FILE);
 
 function loadKeys() {
     try {
-        // Check if file exists
         if (!fs.existsSync(KEYS_FILE)) {
             console.log('[Safe Hub] keys.json does not exist, creating default');
             const defaultKeys = createDefaultKeys();
@@ -35,10 +34,8 @@ function loadKeys() {
             return defaultKeys;
         }
         
-        // Read the file
         const data = fs.readFileSync(KEYS_FILE, 'utf8');
         
-        // Check if file is empty or only whitespace
         if (!data || data.trim() === '') {
             console.log('[Safe Hub] keys.json is empty, creating default');
             const defaultKeys = createDefaultKeys();
@@ -46,7 +43,6 @@ function loadKeys() {
             return defaultKeys;
         }
         
-        // Try to parse JSON
         try {
             const parsed = JSON.parse(data);
             console.log('[Safe Hub] Successfully loaded keys.json');
@@ -71,7 +67,6 @@ function loadKeys() {
 }
 
 function createDefaultKeys() {
-    // Generate a default test key
     const testKey = 'TEST' + Math.random().toString(36).substring(2, 8).toUpperCase();
     const defaultKeys = {};
     defaultKeys[testKey] = {
@@ -142,6 +137,8 @@ let serverData = {
     servers: []
 };
 
+// ==================== API ENDPOINTS ====================
+
 app.post('/api/validate', (req, res) => {
     const { key } = req.body;
     
@@ -167,18 +164,27 @@ app.get('/api/validate', (req, res) => {
     res.json({ valid: false, reason: 'Use POST method to validate keys' });
 });
 
+// SINGLE update endpoint - fixed
 app.post('/api/update', (req, res) => {
-    const data = req.body;
-    const existingIndex = serverData.servers.findIndex(s => s.serverId === data.serverId);
-    
-    if (existingIndex !== -1) {
-        serverData.servers[existingIndex] = data;
-    } else {
-        serverData.servers.push(data);
+    try {
+        const data = req.body;
+        console.log('[Safe Hub] Received update from:', data.gameName || 'Unknown Game');
+        console.log('[Safe Hub] Players:', data.players, 'Server:', data.serverId);
+        
+        const existingIndex = serverData.servers.findIndex(s => s.serverId === data.serverId);
+        
+        if (existingIndex !== -1) {
+            serverData.servers[existingIndex] = data;
+        } else {
+            serverData.servers.push(data);
+        }
+        
+        broadcastData();
+        res.json({ status: 'ok', message: 'Data received' });
+    } catch (error) {
+        console.error('[Safe Hub] Error in /api/update:', error);
+        res.status(500).json({ status: 'error', message: error.message });
     }
-    
-    broadcastData();
-    res.json({ status: 'ok' });
 });
 
 app.get('/api/servers', (req, res) => {
@@ -188,7 +194,6 @@ app.get('/api/servers', (req, res) => {
 app.get('/api/command', (req, res) => {
     const serverId = req.query.serverId;
     const commands = [];
-    
     res.json({ commands: commands });
 });
 
@@ -288,6 +293,8 @@ app.get('/test', (req, res) => {
     });
 });
 
+// ==================== WEBSOCKET ====================
+
 function broadcastData() {
     const message = JSON.stringify(serverData);
     wss.clients.forEach(client => {
@@ -302,6 +309,8 @@ wss.on('connection', (ws) => {
     ws.send(JSON.stringify(serverData));
 });
 
+// ==================== START SERVER ====================
+
 const PORT = process.env.PORT || 8080;
 
 server.listen(PORT, '0.0.0.0', () => {
@@ -313,13 +322,10 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`  Environment: ${process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'}`);
     const keys = loadKeys();
     console.log(`  Total keys: ${Object.keys(keys).length}`);
-    if (Object.keys(keys).length > 0) {
-        console.log(`  Default test key: ${Object.keys(keys)[0]}`);
-    }
     console.log('  Endpoints:');
     console.log(`    POST /api/validate - Validate a key`);
+    console.log(`    POST /api/update   - Update server data (Roblox)`);
     console.log(`    GET  /api/servers  - Get server data`);
-    console.log(`    POST /api/update   - Update server data`);
     console.log(`    GET  /api/keys     - List all keys`);
     console.log(`    POST /api/addkey   - Add a key manually`);
     console.log(`    GET  /test         - Test endpoint`);
