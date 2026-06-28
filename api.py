@@ -121,6 +121,17 @@ def list_keys():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/command', methods=['POST'])
+def handle_command():
+    try:
+        data = request.json
+        print(f'[Safe Hub] Command received: {data}')
+        # Process command here - send to Roblox via HTTP or store for polling
+        return jsonify({'status': 'ok', 'message': 'Command received'})
+    except Exception as e:
+        print(f'[Safe Hub] Error in command: {e}')
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/api/debug', methods=['GET'])
 def debug():
     server_data = load_servers()
