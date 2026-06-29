@@ -5,7 +5,13 @@ import os
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
-CORS(app)
+
+# Allow your new frontend domain
+CORS(app, origins=[
+    "https://safehubss.offic1al.workers.dev",
+    "https://dime-scripts.github.io"  # Keep the old one too
+])
+
 
 KEYS_FILE = 'keys.json'
 SERVER_DATA_FILE = 'servers.json'
