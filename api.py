@@ -6,11 +6,8 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# Allow your new frontend domain
-CORS(app, origins=[
-    "https://safehubss.offic1al.workers.dev",
-    "https://dime-scripts.github.io"  # Keep the old one too
-])
+# Allow all origins so the dashboard works from any domain
+CORS(app)
 
 
 KEYS_FILE = 'keys.json'
