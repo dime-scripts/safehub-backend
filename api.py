@@ -82,8 +82,10 @@ def serve_dashboard():
                 <li>GET /api/servers - Get server data</li>
                 <li>GET /api/keys - List keys</li>
                 <li>POST /api/validate - Validate a key</li>
+                <li>POST /api/addkey - Add a new key (Bot uses this)</li>
+                <li>POST /api/revokekey - Revoke a specific key</li>
+                <li>POST /api/revokeuserkeys - Revoke all keys for a user</li>
                 <li>POST /api/execute - Execute script on server</li>
-                <li>GET /api/execute/status - Check script execution status</li>
             </ul>
         </body>
     </html>
@@ -142,14 +144,12 @@ def validate_key():
         keys = load_keys()
         if key in keys:
             key_data = keys[key]
-            # Check if expired
             expiry = datetime.fromisoformat(key_data['expires_at'])
             if expiry < datetime.now():
                 return jsonify({'valid': False, 'message': 'Key expired'})
             if not key_data.get('active', True):
                 return jsonify({'valid': False, 'message': 'Key inactive'})
             
-            # Increment uses
             key_data['uses'] = key_data.get('uses', 0) + 1
             save_keys(keys)
             
@@ -163,7 +163,104 @@ def validate_key():
     except Exception as e:
         return jsonify({'valid': False, 'message': str(e)}), 500
 
-# NEW: Execute script endpoint
+# ========================================================
+# BOT ENDPOINTS - ADDED FOR DISCORD BOT
+# ========================================================
+
+@app.route('/api/addkey', methods=['POST'])
+def add_key():
+    try:
+        data = request.json
+        key = data.get('key')
+        user_id = data.get('userId')
+        username = data.get('username')
+        max_uses = data.get('maxUses', 1)
+        duration_days = data.get('durationDays', 30)
+        
+        if not key or not user_id:
+            return jsonify({'success': False, 'reason': 'Missing key or userId'}), 400
+        
+        keys = load_keys()
+        
+        if key in keys:
+            return jsonify({'success': False, 'reason': 'Key already exists'}), 400
+        
+        now = datetime.now()
+        keys[key] = {
+            'created_by': username or str(user_id),
+            'user_id': str(user_id),
+            'created_at': now.isoformat(),
+            'expires_at': (now + timedelta(days=duration_days)).isoformat(),
+            'max_uses': max_uses,
+            'uses': 0,
+            'active': True,
+            'duration_days': duration_days
+        }
+        
+        save_keys(keys)
+        print(f'[Safe Hub] Key {key} added for user {user_id}')
+        
+        return jsonify({'success': True, 'message': 'Key added successfully'})
+    except Exception as e:
+        print(f'[Safe Hub] Error in add_key: {e}')
+        return jsonify({'success': False, 'reason': str(e)}), 500
+
+@app.route('/api/revokekey', methods=['POST'])
+def revoke_key():
+    try:
+        data = request.json
+        key = data.get('key')
+        
+        if not key:
+            return jsonify({'success': False, 'reason': 'Missing key'}), 400
+        
+        keys = load_keys()
+        
+        if key not in keys:
+            return jsonify({'success': False, 'reason': 'Key not found'}), 404
+        
+        keys[key]['active'] = False
+        save_keys(keys)
+        
+        print(f'[Safe Hub] Key {key} revoked')
+        return jsonify({'success': True, 'message': 'Key revoked successfully'})
+    except Exception as e:
+        print(f'[Safe Hub] Error in revoke_key: {e}')
+        return jsonify({'success': False, 'reason': str(e)}), 500
+
+@app.route('/api/revokeuserkeys', methods=['POST'])
+def revoke_user_keys():
+    try:
+        data = request.json
+        user_id = data.get('userId')
+        
+        if not user_id:
+            return jsonify({'success': False, 'reason': 'Missing userId'}), 400
+        
+        keys = load_keys()
+        revoked_count = 0
+        
+        for key, key_data in keys.items():
+            if key_data.get('user_id') == str(user_id) and key_data.get('active', False):
+                keys[key]['active'] = False
+                revoked_count += 1
+        
+        save_keys(keys)
+        print(f'[Safe Hub] Revoked {revoked_count} keys for user {user_id}')
+        
+        return jsonify({
+            'success': True,
+            'message': f'Revoked {revoked_count} keys',
+            'count': revoked_count
+        })
+    except Exception as e:
+        print(f'[Safe Hub] Error in revoke_user_keys: {e}')
+        return jsonify({'success': False, 'reason': str(e)}), 500
+
+# ========================================================
+# EXECUTOR ENDPOINTS
+# ========================================================
+
 @app.route('/api/execute', methods=['POST'])
 def execute_script():
     try:
@@ -174,7 +271,7 @@ def execute_script():
         command_type = data.get('command', 'script')
         
         print(f'[Safe Hub] Execute request for server {server_id}')
-        print(f'[Safe Hub] Player: {player}, Script: {script[:100]}...')
+        print(f'[Safe Hub] Player: {player}, Script: {script[:100] if script else "None"}...')
         
         if not server_id:
             return jsonify({'success': False, 'message': 'No server ID provided'}), 400
@@ -182,13 +279,12 @@ def execute_script():
         if not script and command_type != 'shutdown':
             return jsonify({'success': False, 'message': 'No script provided'}), 400
         
-        # Store command for the server to pick up
         command_data = {
             'id': datetime.now().isoformat(),
             'timestamp': datetime.now().isoformat(),
             'player': player,
             'command': command_type,
-            'script': script,
+            'script': script if command_type != 'shutdown' else '',
             'status': 'pending'
         }
         
@@ -207,7 +303,6 @@ def execute_script():
         print(f'[Safe Hub] Error in execute_script: {e}')
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# GET pending commands for a server
 @app.route('/api/command/pending', methods=['GET'])
 def get_pending_commands():
     try:
@@ -216,10 +311,7 @@ def get_pending_commands():
         if not server_id:
             return jsonify({'commands': []})
         
-        # Get pending commands for this server
         commands = pending_commands.get(server_id, [])
-        
-        # Mark them as retrieved
         pending_commands[server_id] = []
         
         print(f'[Safe Hub] Sent {len(commands)} commands to server {server_id}')
@@ -228,7 +320,6 @@ def get_pending_commands():
     except Exception as e:
         return jsonify({'commands': [], 'error': str(e)}), 500
 
-# NEW: Mark command as executed (called by server after execution)
 @app.route('/api/command/complete', methods=['POST'])
 def complete_command():
     try:
@@ -239,7 +330,6 @@ def complete_command():
         
         print(f'[Safe Hub] Command {command_id} completed on {server_id}: {result}')
         
-        # Store result
         if server_id not in script_results:
             script_results[server_id] = []
         script_results[server_id].append({
@@ -252,7 +342,6 @@ def complete_command():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# NEW: Get command results
 @app.route('/api/command/results', methods=['GET'])
 def get_results():
     try:
@@ -262,14 +351,12 @@ def get_results():
             return jsonify({'results': []})
         
         results = script_results.get(server_id, [])
-        # Clear after retrieving
         script_results[server_id] = []
         
         return jsonify({'results': results})
     except Exception as e:
         return jsonify({'results': [], 'error': str(e)}), 500
 
-# NEW: Direct execute - simulates script execution (for testing without a Roblox server)
 @app.route('/api/execute/direct', methods=['POST'])
 def execute_direct():
     try:
@@ -279,15 +366,14 @@ def execute_direct():
         script = data.get('script', '')
         
         print(f'[Safe Hub] Direct execute on {server_id} for {player}')
-        print(f'[Safe Hub] Script: {script}')
+        print(f'[Safe Hub] Script: {script[:200] if script else "None"}')
         
-        # Simulate execution
-        time.sleep(1)  # Simulate processing time
+        time.sleep(1)
         
         return jsonify({
             'success': True,
             'message': f'Script executed on {server_id} for {player}',
-            'script': script[:200],
+            'script': script[:200] if script else '',
             'status': 'executed'
         })
     except Exception as e:
