@@ -3,12 +3,11 @@ from flask_cors import CORS
 import json
 import os
 from datetime import datetime, timedelta
+import threading
+import time
 
 app = Flask(__name__)
-
-# Allow all origins so the dashboard works from any domain
 CORS(app)
-
 
 KEYS_FILE = 'keys.json'
 SERVER_DATA_FILE = 'servers.json'
@@ -65,6 +64,11 @@ def save_servers(data):
     except Exception as e:
         print(f'Error saving servers: {e}')
 
+# Store pending commands for each server
+pending_commands = {}
+# Store script execution results
+script_results = {}
+
 @app.route('/')
 def serve_dashboard():
     return '''
@@ -78,6 +82,8 @@ def serve_dashboard():
                 <li>GET /api/servers - Get server data</li>
                 <li>GET /api/keys - List keys</li>
                 <li>POST /api/validate - Validate a key</li>
+                <li>POST /api/execute - Execute script on server</li>
+                <li>GET /api/execute/status - Check script execution status</li>
             </ul>
         </body>
     </html>
@@ -124,29 +130,84 @@ def list_keys():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Add this to your api.py
+@app.route('/api/validate', methods=['POST'])
+def validate_key():
+    try:
+        data = request.json
+        key = data.get('key')
+        
+        if not key:
+            return jsonify({'valid': False, 'message': 'No key provided'})
+        
+        keys = load_keys()
+        if key in keys:
+            key_data = keys[key]
+            # Check if expired
+            expiry = datetime.fromisoformat(key_data['expires_at'])
+            if expiry < datetime.now():
+                return jsonify({'valid': False, 'message': 'Key expired'})
+            if not key_data.get('active', True):
+                return jsonify({'valid': False, 'message': 'Key inactive'})
+            
+            # Increment uses
+            key_data['uses'] = key_data.get('uses', 0) + 1
+            save_keys(keys)
+            
+            return jsonify({
+                'valid': True,
+                'message': 'Key valid',
+                'key_data': key_data
+            })
+        else:
+            return jsonify({'valid': False, 'message': 'Invalid key'})
+    except Exception as e:
+        return jsonify({'valid': False, 'message': str(e)}), 500
 
-# Store pending commands for each server
-pending_commands = {}
-
-@app.route('/api/command', methods=['POST'])
-def handle_command():
+# NEW: Execute script endpoint
+@app.route('/api/execute', methods=['POST'])
+def execute_script():
     try:
         data = request.json
         server_id = data.get('serverId')
+        player = data.get('player', 'ALL')
+        script = data.get('script', '')
+        command_type = data.get('command', 'script')
         
-        print(f'[Safe Hub] Command received for server {server_id}: {data}')
+        print(f'[Safe Hub] Execute request for server {server_id}')
+        print(f'[Safe Hub] Player: {player}, Script: {script[:100]}...')
+        
+        if not server_id:
+            return jsonify({'success': False, 'message': 'No server ID provided'}), 400
+        
+        if not script and command_type != 'shutdown':
+            return jsonify({'success': False, 'message': 'No script provided'}), 400
         
         # Store command for the server to pick up
+        command_data = {
+            'id': datetime.now().isoformat(),
+            'timestamp': datetime.now().isoformat(),
+            'player': player,
+            'command': command_type,
+            'script': script,
+            'status': 'pending'
+        }
+        
         if server_id not in pending_commands:
             pending_commands[server_id] = []
-        pending_commands[server_id].append(data)
+        pending_commands[server_id].append(command_data)
         
-        return jsonify({'status': 'ok', 'message': 'Command stored'})
+        print(f'[Safe Hub] Command stored for server {server_id}')
+        
+        return jsonify({
+            'success': True,
+            'message': 'Script queued for execution',
+            'command_id': command_data['id']
+        })
     except Exception as e:
-        print(f'[Safe Hub] Error in command: {e}')
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        print(f'[Safe Hub] Error in execute_script: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
 
+# GET pending commands for a server
 @app.route('/api/command/pending', methods=['GET'])
 def get_pending_commands():
     try:
@@ -155,20 +216,92 @@ def get_pending_commands():
         if not server_id:
             return jsonify({'commands': []})
         
-        # Get and clear pending commands for this server
+        # Get pending commands for this server
         commands = pending_commands.get(server_id, [])
-        pending_commands[server_id] = []  # Clear after sending
+        
+        # Mark them as retrieved
+        pending_commands[server_id] = []
+        
+        print(f'[Safe Hub] Sent {len(commands)} commands to server {server_id}')
         
         return jsonify({'commands': commands})
     except Exception as e:
         return jsonify({'commands': [], 'error': str(e)}), 500
+
+# NEW: Mark command as executed (called by server after execution)
+@app.route('/api/command/complete', methods=['POST'])
+def complete_command():
+    try:
+        data = request.json
+        server_id = data.get('serverId')
+        command_id = data.get('commandId')
+        result = data.get('result', 'success')
+        
+        print(f'[Safe Hub] Command {command_id} completed on {server_id}: {result}')
+        
+        # Store result
+        if server_id not in script_results:
+            script_results[server_id] = []
+        script_results[server_id].append({
+            'command_id': command_id,
+            'result': result,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# NEW: Get command results
+@app.route('/api/command/results', methods=['GET'])
+def get_results():
+    try:
+        server_id = request.args.get('serverId')
+        
+        if not server_id:
+            return jsonify({'results': []})
+        
+        results = script_results.get(server_id, [])
+        # Clear after retrieving
+        script_results[server_id] = []
+        
+        return jsonify({'results': results})
+    except Exception as e:
+        return jsonify({'results': [], 'error': str(e)}), 500
+
+# NEW: Direct execute - simulates script execution (for testing without a Roblox server)
+@app.route('/api/execute/direct', methods=['POST'])
+def execute_direct():
+    try:
+        data = request.json
+        server_id = data.get('serverId')
+        player = data.get('player', 'ALL')
+        script = data.get('script', '')
+        
+        print(f'[Safe Hub] Direct execute on {server_id} for {player}')
+        print(f'[Safe Hub] Script: {script}')
+        
+        # Simulate execution
+        time.sleep(1)  # Simulate processing time
+        
+        return jsonify({
+            'success': True,
+            'message': f'Script executed on {server_id} for {player}',
+            'script': script[:200],
+            'status': 'executed'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/debug', methods=['GET'])
 def debug():
     server_data = load_servers()
     return jsonify({
         'servers': server_data,
         'server_count': len(server_data.get('servers', [])),
-        'keys': list(load_keys().keys())
+        'keys': list(load_keys().keys()),
+        'pending_commands': pending_commands,
+        'script_results': script_results
     })
 
 @app.route('/test', methods=['GET'])
@@ -181,4 +314,4 @@ def test():
     })
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8080, debug=True)
